@@ -243,7 +243,7 @@ public partial class MainWindow
     //    warn.Show();
     //}
 
-    private int InitialiseStrategistSingletons()
+    internal static int InitialiseStrategistSingletons()      // CharmCLI: static so the -siva mode can call it without a window
     {
         HashSet<Type> lazyStrategistSingletons = AppDomain.CurrentDomain.GetAssemblies()
             .SelectMany(a => a.GetTypes())

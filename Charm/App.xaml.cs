@@ -23,6 +23,14 @@ public partial class CharmApp : Application
         // Idk why for some people Charm is looking at system32 instead of the exe location...
         Directory.SetCurrentDirectory(AppDomain.CurrentDomain.BaseDirectory);
 
+        // CharmCLI (S.I.V.A.): -siva runs a command without any window, then exits with its code
+        if (SivaCli.Wanted(e.Args))
+        {
+            int code = SivaCli.Run(e.Args);
+            Environment.Exit(code);
+            return;
+        }
+
         if (!IsVcRedistInstalled())
         {
             MessageBoxResult result = MessageBox.Show(
