@@ -1,0 +1,48 @@
+# CharmCLI release (goes into .github/workflows/ of the CharmCLI repository - copy it there by hand, see siva_tools/README_SIVA.md).
+# Tag  v<charm>-cli<N>  (e.g. v3.3.8-cli7, the same as siva_tools/publish_charmcli.ps1 prints) -> builds the self-contained zip WITHOUT Oodle,
+# checks it, and creates a DRAFT release with CharmCLI-<version>-win-x64.zip + .sha256 (S.I.V.A. downloads the newest published one).
+# "Run workflow" by hand = a dry run: the zip is attached to the run as an artifact, no release.
+name: release-charmcli
+on:
+  push:
+    tags: ['v*-cli*']
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - name: Publish (self-contained, no Oodle)
+        shell: pwsh
+        run: ./siva_tools/publish_charmcli.ps1
+      - name: Check the zip
+        shell: pwsh
+        run: |
+          $z = Get-ChildItem dist/CharmCLI-*-win-x64.zip | Select-Object -First 1
+          if (-not $z) { throw 'no zip' }
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $a = [IO.Compression.ZipFile]::OpenRead($z.FullName); $n = $a.Entries | ForEach-Object { $_.FullName }; $a.Dispose()
+          if ($n | Where-Object { $_ -match 'oo2core' }) { throw 'Oodle is in the zip - refused' }
+          if (-not ($n -contains 'Charm.exe')) { throw 'no Charm.exe at the top of the zip' }
+          $ver = $z.Name -replace '^CharmCLI-(.+)-win-x64\.zip$', '$1'
+          if ($env:GITHUB_REF_TYPE -eq 'tag' -and $env:GITHUB_REF_NAME -ne "v$ver") { throw "tag $env:GITHUB_REF_NAME does not match the version in the zip (v$ver)" }
+          Write-Host "OK $($z.Name) $([math]::Round($z.Length / 1MB, 1)) MB"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: charmcli
+          path: dist/CharmCLI-*
+      - name: Draft release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          gh release create "$env:GITHUB_REF_NAME" (Get-ChildItem dist/CharmCLI-*-win-x64.zip*).FullName --draft --title "CharmCLI $env:GITHUB_REF_NAME" `
+            --notes "CharmCLI for S.I.V.A.: Charm (MontagueM/Charm, GPLv3) without a window, branch siva-cli. Oodle is not included (S.I.V.A. uses the copy that comes with the game or with Charm)."

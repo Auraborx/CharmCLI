@@ -135,7 +135,9 @@ namespace Tiger.Schema.Shaders
 
             if (Pixel.Shader != null)
             {
+                var swPs = System.Diagnostics.Stopwatch.StartNew();          // CharmCLI: timed (SivaTimes)
                 SavePixelShader($"{saveDirectory}", fromMaterialViewer);
+                Tiger.Exporters.SivaTimes.Add("  material: pixel shader decompile + save", swPs);
 
                 ShaderDetails psCB = new();
                 psCB.Hash = Pixel.Shader.Hash;
@@ -174,7 +176,10 @@ namespace Tiger.Schema.Shaders
                     if (File.Exists($"{savePath}.{TextureExporter.GetExtension(_config.GetOutputTextureFormat())}"))
                         continue;
 
+                    if (SivaParallel.Enabled) { SivaParallel.Queue(texture.Texture, savePath); continue; }   // CharmCLI: saved later, in parallel
+                    var swTx = System.Diagnostics.Stopwatch.StartNew();
                     texture.Texture.SavetoFile(savePath);
+                    Tiger.Exporters.SivaTimes.Add("  material: texture save", swTx);
                 }
 
                 psCB.TileTextureDetails = new();
@@ -252,6 +257,7 @@ namespace Tiger.Schema.Shaders
                     if (File.Exists($"{savePath}.{TextureExporter.GetExtension(_config.GetOutputTextureFormat())}"))
                         continue;
 
+                    if (SivaParallel.Enabled) { SivaParallel.Queue(texture.Texture, savePath); continue; }   // CharmCLI: saved later, in parallel
                     texture.Texture.SavetoFile($"{saveDirectory}/Textures/{texture.Texture.Hash}");
                 }
 

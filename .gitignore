@@ -280,3 +280,16 @@ FakesAssemblies/
 !Charm/Assets/*
 .vscode/tasks.json
 .vscode/launch.json
+
+# ---- CharmCLI (S.I.V.A.) ----
+# Oodle is never published in this fork (S.I.V.A. uses the user's copy from the game / Charm)
+Charm/ThirdParty/oo2core*.dll
+# what the siva_tools test .bat files leave behind
+/dist/
+/siva_tools/export_*/
+/siva_tools/fbx_samples/
+/siva_tools/*_log.txt
+/siva_tools/*.json
+/siva_tools/charm_dir.txt
+/siva_tools/github_url.txt
+/siva_tools/patches/

@@ -39,7 +39,7 @@ public class Exporter : Subsystem<Exporter>
     public ExporterScene CreateScene(string name, ExportType type, DataExportType dataType = DataExportType.Individual)
     {
         var scene = new ExporterScene { Name = name, Type = type, DataType = dataType };
-        _scenes.Add(scene);
+        lock (_scenes) _scenes.Add(scene);   // CharmCLI: maps are read on several cores
         return scene;
     }
 
@@ -87,7 +87,13 @@ public class Exporter : Subsystem<Exporter>
         if (outputDirectory is null)
             outputDirectory = TigerInstance.GetSubsystem<ConfigSubsystem>().GetExportSavePath();
 
-        ExportEvent(new ExportEventArgs(_scenes, outputDirectory, aggregateOutput));
+        var eventArgs = new ExportEventArgs(_scenes, outputDirectory, aggregateOutput);
+        foreach (ExportEventHandler handler in ExportEvent.GetInvocationList())     // CharmCLI: each exporter timed (SivaTimes)
+        {
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            handler(eventArgs);
+            if (handler.Target is not null) SivaTimes.Add($"exporter {handler.Target.GetType().Name} (total)", sw);
+        }
         Reset();
     }
 }
@@ -201,33 +207,19 @@ public class ExporterScene
 
     public void AddStaticInstancesToMesh(string modelHash, IEnumerable<SStaticMeshInstanceTransform> instances)
     {
-        if (!StaticMeshInstances.ContainsKey(modelHash))
-        {
-            StaticMeshInstances.TryAdd(modelHash, InstancesToTransforms(instances));
-        }
-        else
-        {
-            foreach (Transform transform in InstancesToTransforms(instances))
-            {
-                StaticMeshInstances[modelHash].Add(transform);
-            }
-        }
+        // CharmCLI: thread-safe (maps / data tables are read on several cores; the old ContainsKey-then-TryAdd could drop instances)
+        List<Transform> list = StaticMeshInstances.GetOrAdd(modelHash, _ => new());
+        List<Transform> add = InstancesToTransforms(instances);
+        lock (list) list.AddRange(add);
     }
 
     // D1
     public void AddStaticInstancesToMesh(string modelHash, IEnumerable<InstanceTransform> instances)
     {
-        if (!StaticMeshInstances.ContainsKey(modelHash))
-        {
-            StaticMeshInstances.TryAdd(modelHash, InstancesToTransforms(instances));
-        }
-        else
-        {
-            foreach (Transform transform in InstancesToTransforms(instances))
-            {
-                StaticMeshInstances[modelHash].Add(transform);
-            }
-        }
+        // CharmCLI: thread-safe (maps / data tables are read on several cores; the old ContainsKey-then-TryAdd could drop instances)
+        List<Transform> list = StaticMeshInstances.GetOrAdd(modelHash, _ => new());
+        List<Transform> add = InstancesToTransforms(instances);
+        lock (list) list.AddRange(add);
     }
 
     private static List<Transform> InstancesToTransforms(IEnumerable<SStaticMeshInstanceTransform> instances)
@@ -260,7 +252,7 @@ public class ExporterScene
             StaticMeshInstances.TryAdd(modelHash, new());
         }
 
-        StaticMeshInstances[modelHash].Add(new Transform
+        lock (StaticMeshInstances[modelHash]) StaticMeshInstances[modelHash].Add(new Transform
         {
             Position = translation,
             Rotation = Vector4.QuaternionToEulerAngles(quatRotation),
@@ -335,7 +327,7 @@ public class ExporterScene
                     Scale = new Vector3(entry.Transfrom.Translation.W, entry.Transfrom.Translation.W, entry.Transfrom.Translation.W)
                 };
             }
-            EntityInstances[ent.Hash].Add((Transform)transform);
+            lock (EntityInstances[ent.Hash]) EntityInstances[ent.Hash].Add((Transform)transform);
         }
     }
 
@@ -355,7 +347,7 @@ public class ExporterScene
         }
 
         EntityInstances.TryAdd(model.Hash, new());
-        EntityInstances[model.Hash].Add(transform);
+        lock (EntityInstances[model.Hash]) EntityInstances[model.Hash].Add(transform);
     }
 
     public void AddModel(EntityModel model, Material overrideMaterial = null)
@@ -379,7 +371,7 @@ public class ExporterScene
         {
             TerrainDyemaps.TryAdd(modelHash, new());
         }
-        TerrainDyemaps[modelHash].Add(dyemapHash);
+        lock (TerrainDyemaps[modelHash]) TerrainDyemaps[modelHash].Add(dyemapHash);
     }
 
     public void AddMapModelParts(string name, List<DynamicMeshPart> parts, Transform transform)
@@ -397,7 +389,7 @@ public class ExporterScene
         }
 
         EntityInstances.TryAdd(name, new());
-        EntityInstances[name].Add(transform);
+        lock (EntityInstances[name]) EntityInstances[name].Add(transform);
     }
 
     public void AddMapModelParts(string name, List<MeshPart> parts, Transform transform)
@@ -413,7 +405,7 @@ public class ExporterScene
         if (!StaticMeshInstances.ContainsKey(name))
             StaticMeshInstances.TryAdd(name, new());
 
-        StaticMeshInstances[name].Add(transform);
+        lock (StaticMeshInstances[name]) StaticMeshInstances[name].Add(transform);
     }
 
     public void AddTerrain(string meshHash, List<StaticPart> parts, ulong? id = null, int index = 0)

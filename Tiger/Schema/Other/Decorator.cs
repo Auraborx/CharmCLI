@@ -1,4 +1,4 @@
-using System.Numerics;
+﻿using System.Numerics;
 using Tiger.Exporters;
 using Tiger.Schema.Entity;
 
@@ -30,10 +30,11 @@ public class Decorator : Tag<SDecorator>
         SpeedtreePlacements.Add(Vector4.Zero);
         SpeedtreePlacements.Add(Vector4.Zero.WithW(1));
 
-        using TigerReader reader = _tag.BufferData.TagData.InstanceBuffer.GetReferenceReader();
-
-        for (int i = 0; i < _tag.InstanceRanges.Count - 1; i++)
+        // CharmCLI: the instance ranges run on several cores with -siva (each range reloads its model - 38 s one by one for BrayTech);
+        // each range gets its own reader. Upstream (Charm window): one by one, as before.
+        SivaParallel.ForEach(Enumerable.Range(0, _tag.InstanceRanges.Count - 1), i =>
         {
+            using TigerReader reader = _tag.BufferData.TagData.InstanceBuffer.GetReferenceReader();
             int start = _tag.InstanceRanges[i].Value;
             int end = _tag.InstanceRanges[i + 1].Value;
             int count = end - start;
@@ -42,7 +43,9 @@ public class Decorator : Tag<SDecorator>
             Tag<S80806CB2> model = models[models.Count == 1 ? 0 : i].DecoratorModel;
             var isSpeedTree = model.TagData.SpeedTreeData != null;
 
+            var swD = System.Diagnostics.Stopwatch.StartNew();   // CharmCLI timing
             List<DynamicMeshPart> parts = model.TagData.Model.Load(ExportDetailLevel.MostDetailed, null);
+            SivaTimes.Add("      decorator: load model", swD); swD.Restart();
             if (isSpeedTree)
             {
                 parts = parts.Where(x => x.IndexOffset == 0).ToList();
@@ -129,7 +132,8 @@ public class Decorator : Tag<SDecorator>
                 else
                     decorsScene.AddMapModelParts($"{model.Hash}_{dynID}", parts, transform);
             }
-        }
+            SivaTimes.Add($"      decorator: materials + {(isSpeedTree ? "speedtree" : "decorator")} instances", swD);
+        });
     }
 }
 

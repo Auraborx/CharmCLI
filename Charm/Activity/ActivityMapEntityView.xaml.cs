@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
@@ -412,6 +412,7 @@ public partial class ActivityMapEntityView : UserControl
 
         Parallel.ForEach(dataTables, data =>
         {
+            var swDt = System.Diagnostics.Stopwatch.StartNew();   // CharmCLI: timed (SivaTimes)
             if (Strategy.IsD1() && data.GetReferenceHash().Hash32 == 0x808003F6)
             {
                 List<SMapDataEntry> dataEntries = FileResourcer.Get().GetSchemaTag<S808003F6>(data).TagData.EntityComponent.CollapseIntoDataEntry();
@@ -430,13 +431,15 @@ public partial class ActivityMapEntityView : UserControl
             else
             {
                 Tag<SMapDataTable> dataTable = FileResourcer.Get().GetSchemaTag<SMapDataTable>(data);
-                dataTable.TagData.DataEntries.ForEach(entry =>
+                SivaParallel.ForEach(dataTable.TagData.DataEntries, entry =>   // CharmCLI: entries on several cores with -siva (was .ForEach)
                 {
+                    var swE = System.Diagnostics.Stopwatch.StartNew();   // CharmCLI timing
                     Entity entity = FileResourcer.Get().GetFile<Entity>(entry.Entity.Hash);
                     if (entity.HasGeometry())
                     {
                         entitiesScene.AddMapEntity(entry);
                         entity.SaveMaterialsFromParts(entitiesScene, entity.Load(ExportDetailLevel.MostDetailed));
+                        SivaTimes.Add("    entry: entity with geometry", swE);
                     }
                     else
                     {
@@ -468,7 +471,10 @@ public partial class ActivityMapEntityView : UserControl
                         //dynamicPointScene.AddEntityPoints(entry);
                     }
 
-                    switch (entry.DataResource.GetValue(dataTable.GetReader()))
+                    swE.Restart();
+                    object? res = entry.DataResource.GetValue(dataTable.GetReader());
+                    try {
+                    switch (res)
                     {
                         case SMapSkyObjectsResource skyResource:
                             skyResource.SkyObjects?.Load();
@@ -547,8 +553,10 @@ public partial class ActivityMapEntityView : UserControl
                         default:
                             break;
                     }
+                    } finally { if (res != null) SivaTimes.Add($"    entry: {res.GetType().Name}", swE); }   // CharmCLI timing
                 });
             }
+            if (swDt.Elapsed.TotalSeconds > 1) SivaTimes.Add($"  reading: data table {data} (over 1 s)", swDt);   // CharmCLI: timed
         });
     }
 

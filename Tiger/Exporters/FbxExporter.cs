@@ -8,7 +8,12 @@ namespace Tiger.Exporters;
 // TODO: Clean this up
 public class FbxExporter : AbstractExporter
 {
-    private readonly FbxManager _manager = FbxManager.Create();
+    // CharmCLI: one FBX manager per thread (the FBX SDK is not thread-safe within a manager); the Charm window uses only its main thread = upstream behaviour
+    private readonly ThreadLocal<FbxManager> _managers = new(() => FbxManager.Create());
+    private FbxManager _manager => _managers.Value!;
+    private int _sivaFiles;                                        // CharmCLI timing
+    private int _sivaSinceRecycle;                                 // CharmCLI: files since the FBX manager was last replaced
+    private readonly Stopwatch _sivaFileSw = Stopwatch.StartNew();
     private ConfigSubsystem _config => ConfigSubsystem.Get();
 
     /// <summary>
@@ -16,6 +21,22 @@ public class FbxExporter : AbstractExporter
     /// </summary>
     public override void Export(Exporter.ExportEventArgs args)
     {
+        // CharmCLI: with -siva, models that CharmCLI's own FBX writer can write (SivaFbxWriter: no skeleton, no dye slots) are written on all
+        // cores after the loop; the rest go through the FBX SDK one by one as before. One job per output file; the last one wins, like the overwrite before.
+        bool own = SivaParallel.Enabled && SivaParallel.OwnFbxWriter && !_config.GetSBoxExportEnabled();
+        _sivaFiles = 0; _sivaFileSw.Restart();   // CharmCLI timing: blocks of files count from here
+        var jobs = new Dictionary<string, Action>(StringComparer.OrdinalIgnoreCase);
+        int sdkFiles = 0;
+        void Run(string path, Action sdkJob, Action? ownJob)
+        {
+            string key = Path.GetFullPath(path);
+            if (own && ownJob != null) { jobs[key] = ownJob; return; }
+            jobs.Remove(key);
+            var swSdk = Stopwatch.StartNew();
+            sdkJob(); sdkFiles++;
+            SivaTimes.Add("fbx files written by the FBX SDK (one by one)", swSdk);
+        }
+
         foreach (ExporterScene scene in args.Scenes)
         {
             FbxScene fbxScene = FbxScene.Create(_manager, scene.Name);
@@ -61,6 +82,8 @@ public class FbxExporter : AbstractExporter
                 && scene.DataType == DataExportType.Individual
                 && args.AggregateOutput ? args.OutputDirectory : outputDirectory;
 
+                Run(Path.Join(savePath, mesh.Hash), () =>
+                {
                 FbxScene fbxIndivScene = FbxScene.Create(_manager, mesh.Hash);
                 AddMesh(fbxIndivScene, mesh);
                 ExportScene(fbxIndivScene, Path.Join(savePath, mesh.Hash));
@@ -70,6 +93,7 @@ public class FbxExporter : AbstractExporter
                     string fbxPath = scene.DataType == DataExportType.Map ? modelSubDirectory : "Models";
                     Source2Handler.SaveStaticVMDL(savePath, fbxPath, mesh);
                 }
+                }, () => SivaFbxWriter.Write(Path.Join(savePath, mesh.Hash), mesh.Parts.Where(p => p.Material != null)));
             }
 
             foreach (ExporterEntity entity in scene.Entities)
@@ -82,6 +106,8 @@ public class FbxExporter : AbstractExporter
                 && scene.DataType == DataExportType.Individual
                 && args.AggregateOutput ? args.OutputDirectory : outputDirectory;
 
+                Run(Path.Join(savePath, entity.Mesh.Hash), () =>
+                {
                 FbxScene fbxIndivScene = FbxScene.Create(_manager, entity.Mesh.Hash);
                 AddEntity(fbxIndivScene, entity);
                 ExportScene(fbxIndivScene, Path.Join(savePath, entity.Mesh.Hash));
@@ -91,16 +117,25 @@ public class FbxExporter : AbstractExporter
                     string fbxPath = scene.DataType == DataExportType.Map ? modelSubDirectory : "Models";
                     Source2Handler.SaveEntityVMDL(savePath, fbxPath, entity);
                 }
+                }, SivaFbxWriter.CanWriteEntity(entity) ? () => SivaFbxWriter.Write(Path.Join(savePath, entity.Mesh.Hash), entity.Mesh.Parts) : null);
             }
 
             foreach (ExporterMesh mesh in scene.TerrainMeshes)
             {
+                Run(Path.Join(outputDirectory, $"{mesh.Hash}_{mesh.Index}"), () =>
+                {
                 if (mesh.ID != null)
                     AddVertexAO(mesh, (ulong)mesh.ID);
 
                 FbxScene fbxIndivScene = FbxScene.Create(_manager, $"{mesh.Hash}_{mesh.Index}");
                 AddMesh(fbxIndivScene, mesh);
                 ExportScene(fbxIndivScene, Path.Join(outputDirectory, $"{mesh.Hash}_{mesh.Index}"));
+                }, () =>
+                {
+                if (mesh.ID != null)
+                    AddVertexAO(mesh, (ulong)mesh.ID);
+                SivaFbxWriter.Write(Path.Join(outputDirectory, $"{mesh.Hash}_{mesh.Index}"), mesh.Parts.Where(p => p.Material != null));
+                });
             }
 
             //foreach (var meshInstance in scene.ArrangedStaticMeshInstances)
@@ -109,6 +144,19 @@ public class FbxExporter : AbstractExporter
             //}
 
             //ExportScene(fbxScene, Path.Join(outputDirectory, scene.Name));
+        }
+
+        if (jobs.Count > 0)   // CharmCLI: own FBX writer, all cores
+        {
+            var sw = Stopwatch.StartNew();
+            Parallel.ForEach(jobs, new ParallelOptions { MaxDegreeOfParallelism = SivaParallel.Threads }, job =>
+            {
+                var swJob = Stopwatch.StartNew();
+                try { job.Value(); }
+                catch (Exception e) { Arithmic.Log.Error($"[CharmCLI] fbx {Path.GetFileName(job.Key)}: {e}"); }
+                SivaTimes.Add("  own fbx writer: file (each; summed over all cores)", swJob);
+            });
+            SivaTimes.Add($"fbx files written by CharmCLI's own writer ({jobs.Count} files, {SivaParallel.Threads} cores)", sw);
         }
     }
 
@@ -155,10 +203,30 @@ public class FbxExporter : AbstractExporter
         _manager.GetIOSettings().SetBoolProp(FbxWrapperNative.EXP_FBX_GLOBAL_SETTINGS, true);
         var exporter = Internal.Fbx.FbxExporter.Create(_manager, "");
         exporter.Initialize(outputPath + ".fbx", -1);  // -1 == detect via extension ie binary not ascii, binary is more space efficient                                         
+        var t = Stopwatch.StartNew();   // CharmCLI: timed
         if (fbxScene.GetRootNode().GetChildCount() > 0) // Only export if theres actually something to export
             exporter.Export(fbxScene);
         exporter.Destroy();
-        fbxScene.Clear();
+        SivaTimes.Add("  fbx: write the file", t); t.Restart();
+        if (SivaParallel.Enabled && SivaParallel.FbxRecycle > 0)   // CharmCLI: free the scenes in bulk (the manager also stops growing)
+        {
+            if (++_sivaSinceRecycle >= SivaParallel.FbxRecycle)
+            {
+                _manager.Destroy();
+                _managers.Value = FbxManager.Create();
+                _sivaSinceRecycle = 0;
+                SivaTimes.Add("  fbx: free the scenes (new FBX manager)", t);
+            }
+        }
+        else
+        {
+            fbxScene.Clear();
+            SivaTimes.Add("  fbx: clear the scene", t);
+        }
+        // does the FBX manager slow down as it fills up? time per block of 250 files
+        int n = Interlocked.Increment(ref _sivaFiles) - 1;
+        SivaTimes.Add($"  fbx: files {n / 250 * 250 + 1}-{n / 250 * 250 + 250} (whole file, by order)", _sivaFileSw.Elapsed.TotalSeconds);
+        _sivaFileSw.Restart();
     }
 
     private void AddMesh(FbxScene fbxScene, ExporterMesh mesh)
@@ -304,24 +372,27 @@ public class FbxExporter : AbstractExporter
 
     private FbxMesh AddPart(FbxScene fbxScene, ExporterPart part, bool isEntity = false)
     {
+        var t = Stopwatch.StartNew();   // CharmCLI: time each step (SivaTimes)
         FbxMesh fbxMesh = AddVerticesAndIndices(part);
         FbxNode node = FbxNode.Create(_manager, fbxMesh.GetName());
         node.SetNodeAttribute(fbxMesh);
         fbxScene.GetRootNode().AddChild(node);
+        SivaTimes.Add("  fbx: vertices + triangles", t); t.Restart();
 
-        fbxMesh.AddTexcoords0(part);
-        fbxMesh.AddNormals(part, isEntity);
-        fbxMesh.AddTangents(part);
-        fbxMesh.AddColours(part);
-        fbxMesh.AddVertexAO(part);
-        fbxMesh.AddExtraData(part);
+        fbxMesh.AddTexcoords0(part); SivaTimes.Add("  fbx: uv0", t); t.Restart();
+        fbxMesh.AddNormals(part, isEntity); SivaTimes.Add("  fbx: normals", t); t.Restart();
+        fbxMesh.AddTangents(part); SivaTimes.Add("  fbx: tangents", t); t.Restart();
+        fbxMesh.AddColours(part); SivaTimes.Add("  fbx: vertex colours", t); t.Restart();
+        fbxMesh.AddVertexAO(part); SivaTimes.Add("  fbx: vertex AO", t); t.Restart();
+        fbxMesh.AddExtraData(part); SivaTimes.Add("  fbx: extra data layers", t); t.Restart();
 
         if (part.Material != null)
         {
             fbxMesh.AddMaterial(fbxScene, part.Material.Hash, node, part.Index);
         }
+        SivaTimes.Add("  fbx: material", t); t.Restart();
 
-        fbxMesh.AddSmoothing();
+        fbxMesh.AddSmoothing(); SivaTimes.Add("  fbx: smoothing", t);
 
         return fbxMesh;
     }

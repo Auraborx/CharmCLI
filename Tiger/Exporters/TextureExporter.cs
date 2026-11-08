@@ -32,7 +32,7 @@ public class TextureExporter
     {
         try
         {
-            lock (_lock)
+            lock (SivaParallel.NoTextureLock ? new object() : _lock)   // CharmCLI: a fresh object = no lock (each texture has its own image + file)
             {
                 if (savePath.Contains('.')) // TODO: Figure this out
                 {

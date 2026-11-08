@@ -128,10 +128,20 @@ public class ShaderBytecode : TigerReferenceFile<SShaderBytecode>
             startInfo.WindowStyle = ProcessWindowStyle.Hidden;
             startInfo.Arguments = $"-D \"{binPath}\"";
 
+            bool quiet = Tiger.Exporters.SivaParallel.Enabled;   // CharmCLI: decompiler output not mixed into the CLI's PROGRESS / TIME lines
+            if (quiet) { startInfo.RedirectStandardOutput = true; startInfo.RedirectStandardError = true; startInfo.CreateNoWindow = true; }
+            var swDec = Stopwatch.StartNew();
             using (Process exeProcess = Process.Start(startInfo))
             {
+                if (quiet)
+                {
+                    var err = exeProcess.StandardError.ReadToEndAsync();
+                    exeProcess.StandardOutput.ReadToEnd();
+                    err.Wait();
+                }
                 exeProcess.WaitForExit();
             }
+            Tiger.Exporters.SivaTimes.Add("    shader decompiler runs (3dmigoto, not cached yet)", swDec);
 
             if (!File.Exists(hlslPath))
             {
