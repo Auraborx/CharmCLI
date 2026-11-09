@@ -51,7 +51,7 @@ public class GlobalExporter : AbstractExporter
             string texSavePath = $"{SavePath}/Textures/Atmosphere";
             Directory.CreateDirectory(texSavePath);
 
-            foreach (Texture tex in AtmosTextures)
+            foreach (Texture tex in SivaParallel.SkipUnusedTextures ? new List<Texture>() : AtmosTextures)   // CharmCLI: S.I.V.A. reads only the json
             {
                 // Not ideal but it works
                 TextureExporter.SaveTextureToFile($"{texSavePath}/{tex.Hash}", tex.IsVolume() ? Texture.FlattenVolume(tex.GetScratchImage(true)) : tex.GetScratchImage());
@@ -177,7 +177,7 @@ public class GlobalExporter : AbstractExporter
                     textures.Add(cubemap.CubemapIBLTexture);
             }
 
-            foreach (Texture tex in textures)
+            foreach (Texture tex in SivaParallel.SkipUnusedTextures ? new List<Texture>() : textures)   // CharmCLI: S.I.V.A. reads only Cubemaps.json
             {
                 if (tex is null)
                     continue;
@@ -230,7 +230,7 @@ public class GlobalExporter : AbstractExporter
                     textures.Add(new Texture(light.Cookie));
             }
 
-            foreach (Texture tex in textures)
+            foreach (Texture tex in SivaParallel.SkipUnusedTextures ? new List<Texture>() : textures)   // CharmCLI: S.I.V.A. reads only Lights.json
             {
                 if (tex is null)
                     continue;
@@ -345,7 +345,7 @@ public class GlobalExporter : AbstractExporter
                                     continue;
 
                                 Directory.CreateDirectory($"{SavePath}/Textures/LUT");
-                                lut.Unk28.TagData.LUT.SavetoFile($"{SavePath}/Textures/LUT/{lut.Unk28.TagData.LUT.Hash}");
+                                if (!SivaParallel.SkipUnusedTextures) lut.Unk28.TagData.LUT.SavetoFile($"{SavePath}/Textures/LUT/{lut.Unk28.TagData.LUT.Hash}");
 
                                 Source2Handler.SaveVTEX(
                                     lut.Unk28.TagData.LUT,

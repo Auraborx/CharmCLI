@@ -173,7 +173,7 @@ namespace Tiger.Schema.Shaders
                     });
 
                     string savePath = $"{saveDirectory}/Textures/{texture.Texture.Hash}";
-                    if (File.Exists($"{savePath}.{TextureExporter.GetExtension(_config.GetOutputTextureFormat())}"))
+                    if (!SivaParallel.RewriteTextures && (File.Exists($"{savePath}.{TextureExporter.GetExtension(_config.GetOutputTextureFormat())}") || (SivaParallel.RawDds && File.Exists($"{savePath}.dds"))))
                         continue;
 
                     if (SivaParallel.Enabled) { SivaParallel.Queue(texture.Texture, savePath); continue; }   // CharmCLI: saved later, in parallel
@@ -254,7 +254,7 @@ namespace Tiger.Schema.Shaders
                     });
 
                     string savePath = $"{saveDirectory}/Textures/{texture.Texture.Hash}";
-                    if (File.Exists($"{savePath}.{TextureExporter.GetExtension(_config.GetOutputTextureFormat())}"))
+                    if (!SivaParallel.RewriteTextures && (File.Exists($"{savePath}.{TextureExporter.GetExtension(_config.GetOutputTextureFormat())}") || (SivaParallel.RawDds && File.Exists($"{savePath}.dds"))))
                         continue;
 
                     if (SivaParallel.Enabled) { SivaParallel.Queue(texture.Texture, savePath); continue; }   // CharmCLI: saved later, in parallel

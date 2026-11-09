@@ -22,7 +22,7 @@ namespace Charm;
 
 public static class SivaCli
 {
-    public const string CliVersion = "9";
+    public const string CliVersion = "11";
 
     public static bool Wanted(string[] args) => args.Any(a => string.Equals(a, "-siva", StringComparison.OrdinalIgnoreCase));
 
@@ -44,12 +44,14 @@ public static class SivaCli
             Stopwatch sw = Stopwatch.StartNew();
             if (!Init(args)) return 1;
             Out($"TIME {sw.Elapsed.TotalSeconds:F1} start-up (game version {Strategy.CurrentStrategy})");
+            foreach (string l in SivaTimes.TakeLines()) Out("  " + l);
             switch (cmd.ToLowerInvariant())
             {
                 case "list": return List(args);
                 case "export": return Export(args);
                 case "bubbles": return Bubbles(args);
-                default: Err($"unknown command '{cmd}' (list, export, bubbles)"); return 1;
+                case "serve": return Serve(args);
+                default: Err($"unknown command '{cmd}' (list, export, bubbles, serve)"); return 1;
             }
         }
         catch (Exception e)
@@ -96,21 +98,66 @@ public static class SivaCli
                 return File.Exists(f) ? System.Runtime.InteropServices.NativeLibrary.Load(f) : IntPtr.Zero;
             });
         }
+        var swi = Stopwatch.StartNew();
         MainWindow.InitialiseStrategistSingletons();
+        SivaTimes.Add("start-up: game-version singletons (find + register)", swi); swi.Restart();
         TigerInstance.InitialiseSubsystems();
+        SivaTimes.Add("start-up: subsystems (settings, packages, strings)", swi);
         ConfigSubsystem config = TigerInstance.GetSubsystem<ConfigSubsystem>();
         TextureExporter.SetTextureFormat(config.GetOutputTextureFormat());
+        ApplyOptions(args);
+        if (Strategy.CurrentStrategy == TigerStrategy.NONE) { Err("no game version chosen in Charm's settings"); return false; }
+        if (config.GetPackagesPath(Strategy.CurrentStrategy) == "") { Err($"no packages folder set for {Strategy.CurrentStrategy}"); return false; }
+        return true;
+    }
+
+    // the per-run switches (also per command in -siva serve: each command starts from the defaults)
+    static void ApplyOptions(string[] args)
+    {
+        SivaParallel.Threads = Math.Max(1, Environment.ProcessorCount); SivaParallel.FbxThreads = 1; SivaParallel.FbxRecycle = 500; SivaParallel.OwnFbxWriter = true;
+        SivaParallel.MaxTex = 0; SivaParallel.RawDds = false;
         // -threads N: cores for saving textures (default: all; 1 = Charm's original one-by-one order). -texlock: keep Charm's global encoder lock.
         if (int.TryParse(Arg(args, "threads"), out int th) && th > 0) SivaParallel.Threads = th;
         SivaParallel.Enabled = SivaParallel.Threads > 1;
         if (int.TryParse(Arg(args, "fbxthreads"), out int fth) && fth > 0) SivaParallel.FbxThreads = fth;
         if (int.TryParse(Arg(args, "fbxrecycle"), out int frc) && frc >= 0) SivaParallel.FbxRecycle = frc;
         if (string.Equals(Arg(args, "fbxwriter"), "sdk", StringComparison.OrdinalIgnoreCase)) SivaParallel.OwnFbxWriter = false;
+        // -png fast: CharmCLI's own PNG writer. Measured 2026-11-08 (Io): no faster than Charm's WIC encoder (75 vs 78 s summed, same file sizes) -> off by default
+        SivaParallel.FastPng = string.Equals(Arg(args, "png"), "fast", StringComparison.OrdinalIgnoreCase);
+        if (int.TryParse(Arg(args, "maxtex"), out int mt) && mt >= 0) SivaParallel.MaxTex = mt;
+        SivaParallel.RawDds = string.Equals(Arg(args, "texfile"), "dds", StringComparison.OrdinalIgnoreCase);   // S.I.V.A. 2.17+ passes -texfile dds
+        SivaParallel.SkipUnusedTextures = !args.Any(a => string.Equals(a, "-alltextures", StringComparison.OrdinalIgnoreCase));
         SivaParallel.NoTextureLock = !args.Any(a => string.Equals(a, "-texlock", StringComparison.OrdinalIgnoreCase));
-        if (Strategy.CurrentStrategy == TigerStrategy.NONE) { Err("no game version chosen in Charm's settings"); return false; }
-        if (config.GetPackagesPath(Strategy.CurrentStrategy) == "") { Err($"no packages folder set for {Strategy.CurrentStrategy}"); return false; }
-        return true;
     }
+
+    // ---- -siva serve (S.I.V.A. 2.17+): start once, then run one command per line on stdin (a JSON array: ["export", "-activity", "...", ...]),
+    // each answered with its usual lines and "END <exit code>".  The game data stays loaded between commands (start-up ~3-5 s saved each time).
+    // stdin closed or "quit" -> exit.
+    static int Serve(string[] startArgs)
+    {
+        Out("READY " + CliVersion);
+        string? line;
+        while ((line = Console.In.ReadLine()) != null)
+        {
+            line = line.Trim();
+            if (line.Length == 0) continue;
+            if (line == "quit") break;
+            int rc;
+            try
+            {
+                string[] a = JArray.Parse(line).Select(t => t.ToString()).ToArray();
+                string c = a.Length > 0 ? a[0].ToLowerInvariant() : "";
+                string[] full = new[] { "-siva", c }.Concat(a.Skip(1)).ToArray();
+                ApplyOptions(full);
+                rc = c switch { "list" => List(full), "export" => Export(full), "bubbles" => Bubbles(full), _ => Fail($"unknown command '{c}' (list, export, bubbles)") };
+            }
+            catch (Exception e) { Err(e.ToString()); rc = 1; }
+            foreach (string l in SivaTimes.TakeLines()) Out("  " + l);
+            Out($"END {rc}");
+        }
+        return 0;
+    }
+    static int Fail(string m) { Err(m); return 1; }
 
     // ---- names: Charm's window loads every activity's own string table when its activity list opens; bubble names such as "Aurora Reach" live there
     // and not in the global strings, so without this the CLI printed their hash (D8E3AE56) instead of the name.
@@ -371,6 +418,15 @@ public static class SivaCli
             string bname = Helpers.SanitizeString(string.IsNullOrWhiteSpace(b.Name) ? b.ChildMapReference.Hash.ToString() : b.Name);
             string savePath = Path.Combine(root, "Maps", dest, bname) + Path.DirectorySeparatorChar;
             Directory.CreateDirectory(savePath);
+            // -maxtex: an earlier export of this bubble at another texture size -> its textures are saved again (Charm keeps existing files otherwise)
+            int prevMax = 0; bool prevExport = false;
+            try
+            {
+                string pj = Path.Combine(savePath, "siva_export.json");
+                if (File.Exists(pj)) { prevExport = true; prevMax = JObject.Parse(File.ReadAllText(pj)).Value<int?>("maxtex") ?? 0; }
+            }
+            catch (Exception) { prevExport = true; prevMax = -1; }
+            SivaParallel.RewriteTextures = prevExport && prevMax != SivaParallel.MaxTex;
             Tag<SBubbleDefinition> def = FileResourcer.Get().GetSchemaTag<SBubbleDefinition>(b.ChildMapReference.Hash);
 
             // 1. static map (statics, terrain) - as the window's "All Map" first half
@@ -414,7 +470,8 @@ public static class SivaCli
             {
                 cli = CliVersion, charm = CharmApp.CurrentVersion.Id, game = Strategy.CurrentStrategy.ToString(),
                 destination = act.DestinationName, activity = PackageResourcer.Get().GetActivityName(act.FileHash), activity_hash = act.FileHash.ToString(),
-                bubble = b.Name, bubble_hash = b.ChildMapReference.Hash.ToString(), exported = DateTime.UtcNow.ToString("o")
+                bubble = b.Name, bubble_hash = b.ChildMapReference.Hash.ToString(), exported = DateTime.UtcNow.ToString("o"),
+                maxtex = SivaParallel.MaxTex, texfile = SivaParallel.RawDds ? "dds" : "png"
             }, Formatting.Indented));
             Out($"DONE {savePath}");
         }

@@ -318,7 +318,50 @@ public class Texture : TigerReferenceFile<STextureHeader>
             return;
         }
 
+        // CharmCLI -texfile dds (S.I.V.A. 2.17+): the texture exactly as the game stores it (still compressed: no unpacking, no PNG) - unless it has
+        // to be shrunk (-maxtex), or is a cubemap / volume / array slice (those keep the PNG path)
+        if (Tiger.Exporters.SivaParallel.RawDds && index == 0 && !IsCubemap() && !IsVolume() && _tag.ArraySize <= 1
+            && (Tiger.Exporters.SivaParallel.MaxTex <= 0 || Math.Max(_tag.Width, _tag.Height) <= Tiger.Exporters.SivaParallel.MaxTex))
+        {
+            var swDds = System.Diagnostics.Stopwatch.StartNew();
+            try
+            {
+                File.WriteAllBytes(savePath + ".dds", GetDDSBytes(_tag.GetFormat()));
+                string png = savePath + ".png";
+                if (File.Exists(png)) File.Delete(png);                // (an older export's PNG of it: S.I.V.A. would read that first)
+                Tiger.Exporters.SivaTimes.Add("    texture: written as DDS (as the game stores it)", swDds);
+                return;
+            }
+            catch (Exception e) { Log.Error($"[CharmCLI] {Hash} as DDS: {e.Message} - saving it as PNG"); }
+        }
+
+        var swRead = System.Diagnostics.Stopwatch.StartNew();
         ScratchImage simg = GetScratchImage(index: index);
+        Tiger.Exporters.SivaTimes.Add("    texture: read + decode (game data, BC decompress)", swRead);
+        if (Tiger.Exporters.SivaParallel.MaxTex > 0 && !IsCubemap() && !IsVolume())       // CharmCLI -maxtex: shrink big textures (aspect kept)
+        {
+            TexMetadata md = simg.GetMetadata(); int big = Math.Max(md.Width, md.Height), cap = Tiger.Exporters.SivaParallel.MaxTex;
+            if (big > cap)
+            {
+                var swR = System.Diagnostics.Stopwatch.StartNew();
+                // CharmCLI's own box filter (k x k pixels -> 1, k = a power of 2) on the 8-bit pixels: DirectXTex's Resize took ~0.11 s a texture
+                // (measured 2026-11-08, also with BOX | FORCE_NON_WIC); then one linear step only for sizes that are not a power-of-two multiple of the cap
+                int w = md.Width, h = md.Height, k = 1;
+                while (Math.Max(w, h) / (k * 2) >= cap && w % (k * 2) == 0 && h % (k * 2) == 0) k *= 2;
+                if (k > 1)
+                {
+                    ScratchImage? boxed = SivaBoxShrink(simg, k);
+                    if (boxed != null) { simg.Dispose(); simg = boxed; w /= k; h /= k; }
+                }
+                if (Math.Max(w, h) > cap)
+                {
+                    int nw = Math.Max(1, (int)Math.Round((double)w * cap / Math.Max(w, h))), nh = Math.Max(1, (int)Math.Round((double)h * cap / Math.Max(w, h)));
+                    ScratchImage small = simg.Resize(nw, nh, TEX_FILTER_FLAGS.LINEAR | TEX_FILTER_FLAGS.FORCE_NON_WIC);
+                    simg.Dispose(); simg = small;
+                }
+                Tiger.Exporters.SivaTimes.Add("    texture: shrink (-maxtex)", swR);
+            }
+        }
         if (ConfigSubsystem.Get().GetSBoxExportEnabled()) // TODO make not shit
             simg = ResizeToNearestPowerOf2(simg);
 
@@ -337,6 +380,33 @@ public class Texture : TigerReferenceFile<STextureHeader>
         }
 
         SavetoFile(savePath, simg, GetDimension());// || (IsVolume() && !ConfigSubsystem.Get().GetSBoxExportEnabled()));
+    }
+
+    // CharmCLI: k x k box average of an 8-bit 4-channel 2D image (B8G8R8A8 / R8G8B8A8, sRGB or not); null for any other format
+    private static unsafe ScratchImage? SivaBoxShrink(ScratchImage src, int k)
+    {
+        DirectXTexNet.Image si = src.GetImage(0);
+        if (si.Format is not (DXGI_FORMAT.B8G8R8A8_UNORM or DXGI_FORMAT.B8G8R8A8_UNORM_SRGB or DXGI_FORMAT.R8G8B8A8_UNORM or DXGI_FORMAT.R8G8B8A8_UNORM_SRGB)) return null;
+        int nw = si.Width / k, nh = si.Height / k;
+        ScratchImage dst = TexHelper.Instance.Initialize2D(si.Format, nw, nh, 1, 1, 0);
+        DirectXTexNet.Image di = dst.GetImage(0);
+        IntPtr sBase = si.Pixels, dBase = di.Pixels; long sPitch = si.RowPitch, dPitch = di.RowPitch; int kk = k * k, half = kk / 2;
+        for (int y = 0; y < nh; y++)                                   // (one texture per core already: no inner threads)
+        {
+            byte* sp = (byte*)sBase, drow = (byte*)dBase + y * dPitch;
+            for (int x = 0; x < nw; x++)
+            {
+                int a0 = 0, a1 = 0, a2 = 0, a3 = 0;
+                for (int j = 0; j < k; j++)
+                {
+                    byte* p = sp + (long)(y * k + j) * sPitch + (long)x * k * 4;
+                    for (int i = 0; i < k; i++, p += 4) { a0 += p[0]; a1 += p[1]; a2 += p[2]; a3 += p[3]; }
+                }
+                byte* d = drow + x * 4;
+                d[0] = (byte)((a0 + half) / kk); d[1] = (byte)((a1 + half) / kk); d[2] = (byte)((a2 + half) / kk); d[3] = (byte)((a3 + half) / kk);
+            }
+        }
+        return dst;
     }
 
     public ScratchImage ResizeToNearestPowerOf2(ScratchImage image)

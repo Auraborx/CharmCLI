@@ -112,8 +112,23 @@ public class TextureExporter
         }
         else
         {
+            if (SivaParallel.FastPng && TrySivaPng(scratchImage, savePath + ".png")) return;   // CharmCLI: same pixels, much faster (SivaPng.cs)
             scratchImage.SaveToWICFile(0, WIC_FLAGS.FORCE_SRGB, guid, savePath + ".png");
         }
+    }
+
+    // CharmCLI: 8-bit BGRA / RGBA 2D images through SivaPng; anything else -> false (WIC as before)
+    private static unsafe bool TrySivaPng(ScratchImage scratchImage, string file)
+    {
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        if (scratchImage.GetImageCount() < 1) return false;
+        DirectXTexNet.Image img = scratchImage.GetImage(0);
+        bool bgra = img.Format is DXGI_FORMAT.B8G8R8A8_UNORM or DXGI_FORMAT.B8G8R8A8_UNORM_SRGB;
+        bool rgba = img.Format is DXGI_FORMAT.R8G8B8A8_UNORM or DXGI_FORMAT.R8G8B8A8_UNORM_SRGB;
+        if (!bgra && !rgba || img.Width <= 0 || img.Height <= 0 || img.Pixels == IntPtr.Zero) return false;
+        SivaPng.Write(file, (byte*)img.Pixels, img.Width, img.Height, img.RowPitch, bgra);
+        SivaTimes.Add("    texture: png encode + write (own writer)", sw);
+        return true;
     }
 
     private static void SaveTGATexture(ScratchImage scratchImage, string savePath, TextureDimension dimension)

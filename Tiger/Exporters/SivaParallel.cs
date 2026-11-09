@@ -21,6 +21,16 @@ public static class SivaParallel
     // -fbxwriter sdk: write every model with the Autodesk FBX SDK (one by one, upstream). Default: CharmCLI's own writer (SivaFbxWriter) on all cores
     // for models without skeleton / dye slots.
     public static bool OwnFbxWriter = true;
+    // -png wic: Charm's WIC PNG encoder. Default in the -siva CLI: CharmCLI's own fast writer (SivaPng, same pixels)
+    public static bool FastPng;
+    // -siva CLI: skip the textures S.I.V.A. never reads (cubemaps, atmosphere, light cookies, LUTs; their json files stay). -alltextures keeps them.
+    public static bool SkipUnusedTextures;
+    // -maxtex N: textures larger than N pixels (longest side) are shrunk to N while exporting (512 / 1024 / 2048; 0 = original size, the default)
+    public static int MaxTex;
+    // -texfile dds: textures that need no shrinking are written as DDS exactly as the game stores them (S.I.V.A. 2.17+ reads DDS); default png
+    public static bool RawDds;
+    // set per bubble by the CLI: the folder holds textures saved at another -maxtex -> save them again instead of keeping the existing files
+    public static bool RewriteTextures;
 
     // per-key locks (e.g. one per shader hash: materials sharing a shader must not decompile / write it at the same time)
     private static readonly ConcurrentDictionary<string, object> _keyLocks = new();
