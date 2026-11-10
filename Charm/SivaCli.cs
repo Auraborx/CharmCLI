@@ -22,7 +22,7 @@ namespace Charm;
 
 public static class SivaCli
 {
-    public const string CliVersion = "11";
+    public const string CliVersion = "12";
 
     public static bool Wanted(string[] args) => args.Any(a => string.Equals(a, "-siva", StringComparison.OrdinalIgnoreCase));
 
@@ -197,13 +197,22 @@ public static class SivaCli
         Out($"TIME {sw.Elapsed.TotalSeconds:F1} activity strings");
     }
 
+    // cli12: the game's activities.  Destiny 1 keeps them in its own named-tag table (class 8080052E), as Charm's window reads them
+    // (ActivityListView.PopulateD1Activities); GetAllHashes<IActivity> finds none there, so the D1 map list was empty.
+    static List<FileHash> ActivityHashes()
+    {
+        if (Strategy.CurrentStrategy == TigerStrategy.DESTINY1_RISE_OF_IRON)
+            return PackageResourcer.Get().GetD1Activities().Where(kv => kv.Value == 0x8080052E).Select(kv => kv.Key).ToList();
+        return PackageResourcer.Get().GetAllHashes<IActivity>().ToList();
+    }
+
     // ---- list: every activity with its destination and bubbles -----------------------------------------------------------------------------------
     static int List(string[] args)
     {
         string outPath = Arg(args, "out") ?? "maps.json";
         Stopwatch sw = Stopwatch.StartNew();
         LoadActivityStrings();
-        var hashes = PackageResourcer.Get().GetAllHashes<IActivity>().ToList();
+        var hashes = ActivityHashes();
         var rows = new List<object>(); int n = 0;
         foreach (FileHash h in hashes)
         {
@@ -240,7 +249,7 @@ public static class SivaCli
         Stopwatch sw = Stopwatch.StartNew();
         LoadActivityStrings();
         var hashes = new List<FileHash>();
-        if (actArg.Equals("all", StringComparison.OrdinalIgnoreCase)) hashes = PackageResourcer.Get().GetAllHashes<IActivity>().ToList();
+        if (actArg.Equals("all", StringComparison.OrdinalIgnoreCase)) hashes = ActivityHashes();
         else
         {
             if (!uint.TryParse(actArg, System.Globalization.NumberStyles.HexNumber, null, out uint h32)) { Err($"bad -activity hash: {actArg}"); return 1; }
