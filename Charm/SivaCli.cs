@@ -22,7 +22,7 @@ namespace Charm;
 
 public static class SivaCli
 {
-    public const string CliVersion = "12";
+    public const string CliVersion = "13";
 
     public static bool Wanted(string[] args) => args.Any(a => string.Equals(a, "-siva", StringComparison.OrdinalIgnoreCase));
 
@@ -207,6 +207,25 @@ public static class SivaCli
         return PackageResourcer.Get().GetAllHashes<IActivity>().ToList();
     }
 
+    // cli13: labels for things the game leaves unnamed (mostly Destiny 1). A bubble whose name string is missing (Charm shows its hash or nothing)
+    // gets the dev name of its map tag when the game has one; a destination that is only the activity hash gets the activity's dev name.
+    static bool IsHashLike(string s) => string.IsNullOrWhiteSpace(s) || System.Text.RegularExpressions.Regex.IsMatch(s.Trim(), "^[0-9A-Fa-f]{8}$");
+    static string BubbleLabel(Bubble b)
+    {
+        string n = (b.Name ?? "").Trim();
+        if (!IsHashLike(n) || b.ChildMapReference is null) return n;
+        string dev = PackageResourcer.Get().GetActivityName(b.ChildMapReference.Hash);
+        if (!string.IsNullOrWhiteSpace(dev) && dev != "Activity name not found.") return dev.Trim();
+        return n == "" ? b.ChildMapReference.Hash.ToString() : n;
+    }
+    static string DestinationLabel(IActivity act, FileHash h)
+    {
+        string d = act.DestinationName ?? "";
+        if (!IsHashLike(d)) return d;
+        string[] p = PackageResourcer.Get().GetActivityName(h).Split(':');
+        return p.Length > 1 && p[1].Length > 0 ? p[1] : d;
+    }
+
     // ---- list: every activity with its destination and bubbles -----------------------------------------------------------------------------------
     static int List(string[] args)
     {
@@ -225,8 +244,8 @@ public static class SivaCli
                 IActivity act = FileResourcer.Get().GetFileInterface<IActivity>(h);
                 var bubbles = new List<object>();
                 foreach (Bubble b in act.EnumerateBubbles())
-                    if (b.ChildMapReference is not null) bubbles.Add(new { name = b.Name, hash = b.ChildMapReference.Hash.ToString() });
-                rows.Add(new { hash = h.ToString(), name, destination = act.DestinationName, bubbles });
+                    if (b.ChildMapReference is not null) bubbles.Add(new { name = BubbleLabel(b), hash = b.ChildMapReference.Hash.ToString() });   // cli13: trimmed (D1 names end in spaces), unnamed ones labelled
+                rows.Add(new { hash = h.ToString(), name, destination = DestinationLabel(act, h), bubbles });
             }
             catch (Exception e) { Out($"SKIP {h}: {e.Message}"); }
         }
@@ -417,7 +436,7 @@ public static class SivaCli
         LoadActivityStrings();
         IActivity act = FileResourcer.Get().GetFileInterface<IActivity>(new FileHash(actHash));
         string root = Arg(args, "out") ?? TigerInstance.GetSubsystem<ConfigSubsystem>().GetExportSavePath();
-        string dest = Helpers.SanitizeString(act.DestinationName ?? "Map");
+        string dest = Helpers.SanitizeString(DestinationLabel(act, act.FileHash) is { Length: > 0 } dl ? dl : "Map");
         var bubbles = act.EnumerateBubbles().Where(b => b.ChildMapReference is not null)
             .Where(b => bubArg == null || bubArg.Equals("all", StringComparison.OrdinalIgnoreCase) || b.ChildMapReference.Hash.ToString().Equals(bubArg, StringComparison.OrdinalIgnoreCase))
             .ToList();
@@ -425,7 +444,7 @@ public static class SivaCli
         int step = 0, total = bubbles.Count * 2;
         foreach (Bubble b in bubbles)
         {
-            string bname = Helpers.SanitizeString(string.IsNullOrWhiteSpace(b.Name) ? b.ChildMapReference.Hash.ToString() : b.Name);
+            string bname = Helpers.SanitizeString(BubbleLabel(b));   // cli13: same label as the list (no folder ending in a space: Windows drops it)
             string savePath = Path.Combine(root, "Maps", dest, bname) + Path.DirectorySeparatorChar;
             Directory.CreateDirectory(savePath);
             // -maxtex: an earlier export of this bubble at another texture size -> its textures are saved again (Charm keeps existing files otherwise)

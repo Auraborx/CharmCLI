@@ -357,22 +357,24 @@ public class PackageResourcer : Strategy.StrategistSingleton<PackageResourcer>
         }
     }
 
-    private async void CacheAllD1NamedTags()
+    // CharmCLI cli13: synchronous. It was 'async void', so it returned before the D1 named tags were read; Charm's window opens its activity
+    // list much later and never noticed, but CharmCLI's -siva list ran straight away and got an empty table (no D1 maps).
+    private void CacheAllD1NamedTags()
     {
         ConcurrentHashSet<PackageActivityEntry> activityEntries = new();
 
         ParallelOptions parallelOptions = new() { MaxDegreeOfParallelism = Environment.ProcessorCount / 2, CancellationToken = CancellationToken.None };
-        await Parallel.ForEachAsync(_packagesCache.Values, parallelOptions, async (package, ct) =>
+        Parallel.ForEach(_packagesCache.Values, parallelOptions, package =>
         {
             activityEntries.UnionWith(package.GetAllActivities());
         });
 
-        _d1NamedTags = new();
-
+        Dictionary<FileHash, TagClassHash> tags = new();
         foreach (PackageActivityEntry entry in activityEntries)
         {
-            _d1NamedTags.TryAdd(entry.TagHash, entry.TagClassHash);
+            tags.TryAdd(entry.TagHash, entry.TagClassHash);
         }
+        _d1NamedTags = tags;
     }
 }
 
