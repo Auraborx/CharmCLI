@@ -29,6 +29,10 @@ public static class SivaParallel
     public static int MaxTex;
     // -texfile dds: textures that need no shrinking are written as DDS exactly as the game stores them (S.I.V.A. 2.17+ reads DDS); default png
     public static bool RawDds;
+    // -d1shaders (CLI) or environment variable CHARM_D1SHADERS=1 (also for the Charm window): D1 (PS4) materials write their raw shader files
+    // to Shaders/PS4/ next to the export (D1 shaders cannot be decompiled; for research on reading them)
+    public static readonly bool DumpD1ShadersEnv = Environment.GetEnvironmentVariable("CHARM_D1SHADERS") == "1";
+    public static bool DumpD1Shaders = DumpD1ShadersEnv;
     // set per bubble by the CLI: the folder holds textures saved at another -maxtex -> save them again instead of keeping the existing files
     public static bool RewriteTextures;
 

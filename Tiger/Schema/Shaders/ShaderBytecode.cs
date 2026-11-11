@@ -90,6 +90,31 @@ public class ShaderBytecode : TigerReferenceFile<SShaderBytecode>
         return reader.ReadBytes((int)_tag.BytecodeSize);
     }
 
+    // CharmCLI (S.I.V.A., -d1shaders): write the shader's reference file exactly as stored (on D1 a PS4 shader, not DXBC) plus its header,
+    // so it can be checked / translated outside Charm. Works on D1 and D2; nothing is decoded here.
+    public void DumpRaw(string dir, string prefix)
+    {
+        string binPath = Path.Combine(dir, $"{prefix}_{Hash}.bin");
+        if (File.Exists(binPath))
+            return;
+        Directory.CreateDirectory(dir);
+        byte[] data = GetReferenceData();
+        string header;
+        try { header = $"{{\"hash\": \"{Hash}\", \"reference\": \"{ReferenceHash}\", \"file_size\": {_tag.FileSize}, \"bytecode_size\": {_tag.BytecodeSize}, \"unk0c\": \"{_tag.Unk0C}\", \"reference_bytes\": {data.Length}}}"; }
+        catch (Exception e)
+        {
+            string msg = e.Message.Replace('"', '\'');
+            header = $"{{\"hash\": \"{Hash}\", \"reference\": \"{ReferenceHash}\", \"reference_bytes\": {data.Length}, \"header_error\": \"{msg}\"}}";
+        }
+        lock (_lock)
+        {
+            if (File.Exists(binPath))
+                return;
+            File.WriteAllText(Path.Combine(dir, $"{prefix}_{Hash}.json"), header);
+            File.WriteAllBytes(binPath, data);
+        }
+    }
+
     private static object _lock = new();
     public string Decompile(string name, string savePath = "hlsl_temp")
     {

@@ -46,7 +46,14 @@ namespace Tiger.Schema.Shaders
         public void SavePixelShader(string saveDirectory, bool fromMaterialViewer = false)
         {
             if (Strategy.IsD1())
+            {
+                if (SivaParallel.DumpD1Shaders && Pixel.Shader != null && Pixel.Shader.Hash.IsValid())   // CharmCLI -d1shaders
+                {
+                    try { Pixel.Shader.DumpRaw($"{saveDirectory}/Shaders/PS4", "PS"); }
+                    catch (Exception e) { Log.Error($"-d1shaders: pixel shader {Pixel.Shader.Hash}: {e.Message}"); }
+                }
                 return;
+            }
 
             // Dont export the hlsl if none of the shader related settings are enabled
             // but force export if we're saving from the material viewer
@@ -96,7 +103,14 @@ namespace Tiger.Schema.Shaders
         public void SaveVertexShader(string saveDirectory, bool fromMaterialViewer = false)
         {
             if (Strategy.IsD1())
+            {
+                if (SivaParallel.DumpD1Shaders && Vertex.Shader != null && Vertex.Shader.Hash.IsValid())   // CharmCLI -d1shaders
+                {
+                    try { Vertex.Shader.DumpRaw($"{saveDirectory}/PS4", "VS"); }
+                    catch (Exception e) { Log.Error($"-d1shaders: vertex shader {Vertex.Shader.Hash}: {e.Message}"); }
+                }
                 return;
+            }
 
             // Dont export the hlsl if none of the shader related settings are enabled
             // but force export if we're saving from the material viewer

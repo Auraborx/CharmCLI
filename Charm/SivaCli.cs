@@ -128,6 +128,7 @@ public static class SivaCli
         SivaParallel.RawDds = string.Equals(Arg(args, "texfile"), "dds", StringComparison.OrdinalIgnoreCase);   // S.I.V.A. 2.17+ passes -texfile dds
         SivaParallel.SkipUnusedTextures = !args.Any(a => string.Equals(a, "-alltextures", StringComparison.OrdinalIgnoreCase));
         SivaParallel.NoTextureLock = !args.Any(a => string.Equals(a, "-texlock", StringComparison.OrdinalIgnoreCase));
+        SivaParallel.DumpD1Shaders = SivaParallel.DumpD1ShadersEnv || args.Any(a => string.Equals(a, "-d1shaders", StringComparison.OrdinalIgnoreCase));   // D1 only: raw PS4 shader files to Shaders/PS4/
     }
 
     // ---- -siva serve (S.I.V.A. 2.17+): start once, then run one command per line on stdin (a JSON array: ["export", "-activity", "...", ...]),
